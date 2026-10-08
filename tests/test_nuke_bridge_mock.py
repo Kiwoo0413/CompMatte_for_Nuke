@@ -61,6 +61,26 @@ class TestNukeBridgeMock(unittest.TestCase):
         self.assertIsNotNone(py_exe)
         self.assertTrue(os.path.exists(py_exe))
 
+    def test_custom_output_directory(self):
+        import tempfile
+        node = compmatte_bridge.create_compmatte_node()
+        self.assertIn("output_dir", node.knobs())
+        self.assertIn("btn_open", node.knobs())
+
+        # Test default fallback when output_dir is empty
+        default_dir = compmatte_bridge.get_compmatte_cache_dir(node)
+        self.assertTrue(os.path.isdir(default_dir))
+
+        # Test custom directory override
+        temp_custom = tempfile.mkdtemp(prefix="test_custom_out_")
+        try:
+            node.knob("output_dir").setValue(temp_custom)
+            res_dir = compmatte_bridge.get_compmatte_cache_dir(node)
+            self.assertEqual(os.path.normpath(res_dir), os.path.normpath(temp_custom))
+        finally:
+            import shutil
+            shutil.rmtree(temp_custom, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

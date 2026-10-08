@@ -77,7 +77,9 @@ pip install numpy opencv-python Pillow
   - `Edge Matte`: 광학 색상차 기반 미세 투과 엣지
 - **Red / Blue Weight**: 색상차 키잉 밸런스 가중치 (기본값: 0.5)
 - **⚡ Extract Matte (Current Frame)**: 현재 프레임의 알파 마스크를 즉시 추출 및 뷰어 갱신
-- **🎬 Bake Frame Range...**: 지정한 타임라인 구간의 알파 시퀀스를 백그라운드 캐시로 일괄 베이크
+- **🎬 Bake Frame Range...**: 지정한 타임라인 구간의 알파 시퀀스를 일괄 베이크 (팝업창에서 프레임 구간 및 출력 경로 지정 가능)
+- **📂 Open Output Folder**: 현재 설정된 출력 폴더(또는 기본 Nuke 캐시 폴더)를 윈도우 탐색기에서 즉시 열기
+- **Output Folder**: 사용자 지정 출력 폴더 (비워둘 경우 Nuke 환경설정의 `DiskCachePath` 고속 디스크로 자동 저장)
 
 ### 2. Tab 2: Clean Plate (IBK 레퍼런스 스크린)
 - **Patch Size**: 인페인팅 확장 커널 크기 (기본값: 5)
@@ -101,7 +103,7 @@ pip install numpy opencv-python Pillow
 ## 🧪 유닛 테스트 실행 (TDD Validation)
 
 ```bash
-# 13개 합성/수학/CLI 워커 검증 테스트 실행 (실행 시간: ~0.3초)
+# 14개 합성/수학/CLI 워커/경로 검증 테스트 실행 (실행 시간: ~0.3초)
 python -m unittest discover -s tests
 ```
 

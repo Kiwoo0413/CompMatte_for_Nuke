@@ -215,11 +215,28 @@ def check_environment(custom_path: Optional[str] = None) -> Dict[str, Any]:
 # Cache & Directory Management
 # =============================================================================
 
-def get_compmatte_cache_dir() -> str:
+def get_compmatte_cache_dir(node: Optional[Any] = None) -> str:
     """
-    Retrieves or creates a dedicated cache folder for CompMatte bake files.
-    Prioritizes Nuke's cache directory preferences, falling back to tempdir.
+    Retrieves or creates the destination folder for CompMatte alpha files:
+      0. Custom path specified in node's 'output_dir' knob if present and non-empty.
+      1. Nuke Preferences cache disk ('DiskCachePath', 'localCachePath')
+      2. Environment variable ('COMPMATTE_CACHE_DIR', 'NUKE_DISK_CACHE', 'NUKE_TEMP_DIR')
+      3. System temp directory (%TEMP%/CompMatte_Cache/)
     """
+    # 0. Check custom directory from node knob
+    if node:
+        try:
+            custom_knob = node.knob("output_dir")
+            if custom_knob and custom_knob.value():
+                val = str(custom_knob.value()).strip()
+                if val:
+                    expanded = os.path.expandvars(os.path.expanduser(val)).replace("\\", "/").rstrip("/")
+                    os.makedirs(expanded, exist_ok=True)
+                    if os.path.isdir(expanded) and os.access(expanded, os.W_OK):
+                        return expanded
+        except Exception:
+            pass
+
     candidates = []
     try:
         pref = nuke.toNode('preferences')
@@ -248,6 +265,23 @@ def get_compmatte_cache_dir() -> str:
     fallback = os.path.join(tempfile.gettempdir(), "CompMatte_Cache").replace("\\", "/")
     os.makedirs(fallback, exist_ok=True)
     return fallback
+
+
+def on_open_output_folder(node: Any) -> None:
+    """
+    Opens the active CompMatte output directory in the system file explorer.
+    """
+    folder = get_compmatte_cache_dir(node)
+    if os.path.exists(folder):
+        if sys.platform == "win32":
+            os.startfile(folder)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", folder])
+        else:
+            subprocess.Popen(["xdg-open", folder])
+    else:
+        if _IN_NUKE:
+            nuke.message(f"Output folder does not exist yet:\n{folder}")
 
 
 # =============================================================================
@@ -336,6 +370,17 @@ def setup_compmatte_knobs(node: Any) -> None:
     )
     btn_range.setTooltip("Bakes alpha matte sequence for specified frame range into cache.")
     node.addKnob(btn_range)
+
+    btn_open = nuke.PyScript_Knob(
+        "btn_open", "📂 Open Output Folder",
+        "import compmatte_bridge; compmatte_bridge.on_open_output_folder(nuke.thisNode())"
+    )
+    btn_open.setTooltip("Opens the active output directory in file explorer.")
+    node.addKnob(btn_open)
+
+    output_dir = nuke.File_Knob("output_dir", "Output Folder")
+    output_dir.setTooltip("Custom destination directory for alpha frames. Leave empty to automatically use Nuke Cache Disk.")
+    node.addKnob(output_dir)
 
     # Status readout
     env_info = check_environment()
@@ -545,8 +590,8 @@ def on_extract_matte(node: Any) -> None:
         "gamma": float(node.knob("gamma").value()) if node.knob("gamma") else 1.0,
     }
 
-    cache_dir = get_compmatte_cache_dir()
-    out_alpha_path = os.path.join(cache_dir, f"compmatte_alpha_{curr_frame:04d}.png").replace("\\", "/")
+    target_dir = get_compmatte_cache_dir(node)
+    out_alpha_path = os.path.join(target_dir, f"compmatte_alpha_{curr_frame:04d}.png").replace("\\", "/")
 
     custom_py = node.knob("custom_python").value() if node.knob("custom_python") else None
 
@@ -606,10 +651,12 @@ def on_render_range(node: Any) -> None:
 
     first_f = int(nuke.root()["first_frame"].value())
     last_f = int(nuke.root()["last_frame"].value())
+    curr_custom = node.knob("output_dir").value() if node.knob("output_dir") else ""
 
     panel = nuke.Panel("Bake CompMatte Sequence")
     panel.addSingleLineInput("Start Frame:", str(first_f))
     panel.addSingleLineInput("End Frame:", str(last_f))
+    panel.addSingleLineInput("Output Folder (empty = default cache):", str(curr_custom or ""))
 
     if not panel.show():
         return
@@ -621,12 +668,16 @@ def on_render_range(node: Any) -> None:
         nuke.message("Invalid frame range specified.")
         return
 
+    new_custom = panel.value("Output Folder (empty = default cache):").strip()
+    if node.knob("output_dir"):
+        node.knob("output_dir").setValue(new_custom)
+
     src_input = node.input(0)
     if not src_input:
         nuke.message("Please connect an image or video plate to the 'Source' input.")
         return
 
-    cache_dir = get_compmatte_cache_dir()
+    target_dir = get_compmatte_cache_dir(node)
     custom_py = node.knob("custom_python").value() if node.knob("custom_python") else None
 
     cfg = {
@@ -650,7 +701,7 @@ def on_render_range(node: Any) -> None:
         if not src_temp:
             continue
 
-        out_alpha_path = os.path.join(cache_dir, f"compmatte_alpha_{f:04d}.png").replace("\\", "/")
+        out_alpha_path = os.path.join(target_dir, f"compmatte_alpha_{f:04d}.png").replace("\\", "/")
         try:
             run_compmatte_external(src_temp, out_alpha_path, cfg, None, None, custom_py)
         except Exception as e:
@@ -663,5 +714,16 @@ def on_render_range(node: Any) -> None:
 
     del task
     if node.knob("cm_status"):
-        node.knob("cm_status").setValue(f"Bake Complete for frames {start_f}..{end_f} in {cache_dir}")
-    nuke.message(f"Bake Complete! Alpha matte sequence saved in:\n{cache_dir}")
+        node.knob("cm_status").setValue(f"Bake Complete for frames {start_f}..{end_f} in {target_dir}")
+
+    # Reload internal Read node with active directory
+    try:
+        read_n = node.node("Read_CompMatte_Alpha")
+        if read_n:
+            read_n["file"].setValue(os.path.join(target_dir, "compmatte_alpha_%04d.png").replace("\\", "/"))
+            if read_n.knob("reload"):
+                read_n.knob("reload").execute()
+    except Exception:
+        pass
+
+    nuke.message(f"Bake Complete! Alpha matte sequence saved in:\n{target_dir}")

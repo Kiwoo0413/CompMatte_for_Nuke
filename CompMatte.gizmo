@@ -15,6 +15,8 @@ Gizmo {
  addUserKnob {26 sep1 l "" +STARTLINE}
  addUserKnob {22 btn_extract l "⚡ Extract Matte (Current Frame)" T "import compmatte_bridge; compmatte_bridge.on_extract_matte(nuke.thisNode())" +STARTLINE}
  addUserKnob {22 btn_range l "🎬 Bake Frame Range..." -STARTLINE T "import compmatte_bridge; compmatte_bridge.on_render_range(nuke.thisNode())"}
+ addUserKnob {22 btn_open l "📂 Open Output Folder" -STARTLINE T "import compmatte_bridge; compmatte_bridge.on_open_output_folder(nuke.thisNode())"}
+ addUserKnob {2 output_dir l "Output Folder"}
  addUserKnob {26 sep2 l "" +STARTLINE}
  addUserKnob {1 cm_status l "Status"}
  cm_status "Ready (Pure Optical Engine - 60fps+)"
