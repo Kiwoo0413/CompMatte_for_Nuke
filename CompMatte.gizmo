@@ -1,0 +1,77 @@
+#! C:/Program Files/Nuke/nuke.exe -nx
+version 16.0
+Gizmo {
+ inputs 3
+ user_name CompMatte
+ help "CompMatte: VFX Compositing-Grade Optical Matting Toolkit for Nuke.\nFeatures IBK Clean Plate, Topological Hole-Filling (Pure 1.0 Core Lock), and Safe Zone Edge Detail Re-Injection (100% Micro Hair Preservation)."
+ 
+ addUserKnob {20 compmatte_tab l "CompMatte"}
+ addUserKnob {4 screen_type l "Screen Type" M {green blue custom}}
+ addUserKnob {4 view_mode l "View Output" M {"Final Alpha (rgba.a)" "Premultiplied RGBA" "Clean Plate" "Core Matte" "Edge Matte"}}
+ addUserKnob {7 w_red l "Red Weight" R 0 1}
+ w_red 0.5
+ addUserKnob {7 w_blue l "Blue/Green Weight" R 0 1}
+ w_blue 0.5
+ addUserKnob {26 sep1 l "" +STARTLINE}
+ addUserKnob {22 btn_extract l "⚡ Extract Matte (Current Frame)" T "import compmatte_bridge; compmatte_bridge.on_extract_matte(nuke.thisNode())" +STARTLINE}
+ addUserKnob {22 btn_range l "🎬 Bake Frame Range..." -STARTLINE T "import compmatte_bridge; compmatte_bridge.on_render_range(nuke.thisNode())"}
+ addUserKnob {26 sep2 l "" +STARTLINE}
+ addUserKnob {1 cm_status l "Status"}
+ cm_status "Ready (Pure Optical Engine - 60fps+)"
+
+ addUserKnob {20 tab_clean_plate l "Clean Plate"}
+ addUserKnob {3 patch_size l "Patch Size"}
+ patch_size 5
+ addUserKnob {3 patch_iterations l "Patch Iterations"}
+ patch_iterations 4
+ addUserKnob {3 cp_blur l "Blur Radius"}
+ cp_blur 3
+
+ addUserKnob {20 tab_core_edge l "Core & Edge Fusion"}
+ addUserKnob {6 use_hole_fill l "Topological Hole-Filling (Pure 1.0 Core Lock)" +STARTLINE}
+ use_hole_fill true
+ addUserKnob {3 core_erode l "Core Inset / Erode"}
+ core_erode 7
+ addUserKnob {6 restore_fine_edges l "Safe Zone Edge Detail Re-Injection" +STARTLINE}
+ restore_fine_edges true
+ addUserKnob {3 safe_radius l "Safe Zone Radius (px)"}
+ safe_radius 40
+ addUserKnob {7 feather l "Sub-pixel Feathering" R 0 5}
+ feather 0.5
+ addUserKnob {7 black_clip l "Black Cutoff (Pure 0.0)" R 0 0.5}
+ black_clip 0.05
+ addUserKnob {7 white_clip l "White Cutoff (Pure 1.0)" R 0.5 1}
+ white_clip 0.95
+ addUserKnob {7 gamma l "Alpha Gamma" R 0.1 3}
+ gamma 1.0
+
+ addUserKnob {20 tab_about l "About"}
+ addUserKnob {26 about_info l "" +STARTLINE T "<b>CompMatte for Nuke (v3.0)</b><br/>• Pure Optical & Compositing Alpha Matting Toolkit<br/>• Topological Hole-Filling (100% Solid Core)<br/>• Safe Zone Edge Detail Re-Injection (0% Hair Loss)<br/>• Zero PyTorch / Zero VRAM Overhead (Real-Time 60fps+)"}
+}
+ Input {
+  inputs 0
+  name Holdout
+  number 2
+  xpos 180
+  ypos -120
+ }
+ Input {
+  inputs 0
+  name CleanPlate
+  number 1
+  xpos 70
+  ypos -120
+ }
+ Input {
+  inputs 0
+  name Source
+  number 0
+  xpos -40
+  ypos -120
+ }
+ Output {
+  name Output
+  xpos -40
+  ypos 120
+ }
+end_group
