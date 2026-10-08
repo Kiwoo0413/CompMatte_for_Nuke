@@ -499,7 +499,7 @@ def create_compmatte_node() -> Any:
         copy_node = nuke.nodes.Copy(name="Copy_Alpha")
         copy_node.setInput(0, in_src)
         copy_node.setInput(1, read_alpha)
-        copy_node["from0"].setValue("rgba.alpha")
+        copy_node["from0"].setValue("rgba.red")
         copy_node["to0"].setValue("rgba.alpha")
 
         # Premult option
