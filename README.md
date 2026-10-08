@@ -80,7 +80,7 @@ pip install numpy opencv-python Pillow
 
 ### 1. Tab 1: CompMatte (메인 탭)
 
-- **Screen Type**: `green` / `blue` / `custom` (스크린 색상 선택)
+- **Screen Type & Color Picker**: `green` / `blue` / `custom` 선택 드롭다운 및 우측 인라인 스포이드(컬러 피커). 뷰어에서 `Ctrl + Alt + Click`으로 실제 배경색을 직접 스포이드로 찍어 샘플링할 수 있으며, 프리셋 선택 시 자동 초기화(Green: 0 1 0, Blue: 0 0 1) 및 스포이드 샘플링 시 `custom` 모드로 자동 전환됩니다.
 - **View Output**:
   - `Final Alpha (rgba.a)`: 완성된 고품질 알파 마스크
   - `Premultiplied RGBA`: 최종 알파가 곱해진 합성용 RGBA

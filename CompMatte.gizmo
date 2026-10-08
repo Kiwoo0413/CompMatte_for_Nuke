@@ -7,6 +7,8 @@ Gizmo {
  
  addUserKnob {20 compmatte_tab l "CompMatte"}
  addUserKnob {4 screen_type l "Screen Type" M {green blue custom}}
+ addUserKnob {18 screen_color l "" -STARTLINE}
+ screen_color {0 1 0}
  addUserKnob {4 view_mode l "View Output" M {"Final Alpha (rgba.a)" "Premultiplied RGBA" "Clean Plate" "Core Matte" "Edge Matte"}}
  addUserKnob {7 w_red l "Red Weight" R 0 1}
  w_red 0.5

@@ -49,14 +49,19 @@ except ImportError:
         def name(self): return self._name
         def setName(self, n): self._name = n
         def addKnob(self, k): self._knobs[k.name()] = k
-        def knob(self, n): return self._knobs.get(n)
+        def knob(self, n):
+            if n == "knobChanged" and n not in self._knobs:
+                self._knobs[n] = _MockKnob(n, "")
+            return self._knobs.get(n)
         def knobs(self): return self._knobs
         def begin(self): pass
         def end(self): pass
         def input(self, idx): return self.inputs_list[idx] if idx < len(self.inputs_list) else None
         def setInput(self, idx, n): pass
+        def node(self, n): return _MockNode(n)
 
     class _MockNuke:
+        STARTLINE = 0x00001000
         def createNode(self, cls, *args, **kwargs): return _MockNode(cls)
         def toNode(self, name): return None
         def selectedNode(self): return None
@@ -71,7 +76,7 @@ except ImportError:
         Double_Knob = staticmethod(lambda name, l=None: _MockKnob(name, 0.0))
         Int_Knob = staticmethod(lambda name, l=None: _MockKnob(name, 0))
         Boolean_Knob = staticmethod(lambda name, l=None: _MockKnob(name, False))
-        Color_Knob = staticmethod(lambda name, l=None: _MockKnob(name, [0, 1, 0]))
+        Color_Knob = staticmethod(lambda name, l=None: _MockKnob(name, [0.0, 1.0, 0.0]))
         PyScript_Knob = staticmethod(lambda name, l=None, cmd="": _MockKnob(name))
         Text_Knob = staticmethod(lambda name, l=None, text="": _MockKnob(name, text))
         File_Knob = staticmethod(lambda name, l=None: _MockKnob(name, ""))
@@ -341,6 +346,12 @@ def setup_compmatte_knobs(node: Any) -> None:
     screen_type.setTooltip("Backing screen color to extract.")
     node.addKnob(screen_type)
 
+    screen_color = nuke.Color_Knob("screen_color", "")
+    screen_color.clearFlag(nuke.STARTLINE)
+    screen_color.setValue([0.0, 1.0, 0.0])
+    screen_color.setTooltip("Screen color picker swatch & eyedropper. Sample background directly from viewer using Ctrl+Alt+Click.")
+    node.addKnob(screen_color)
+
     view_mode = nuke.Enumeration_Knob(
         "view_mode", "View Output",
         ["Final Alpha (rgba.a)", "Premultiplied RGBA", "Clean Plate", "Core Matte", "Edge Matte"]
@@ -468,6 +479,12 @@ def setup_compmatte_knobs(node: Any) -> None:
     )
     node.addKnob(about_text)
 
+    # Wire interactive knobChanged handler
+    if node.knob("knobChanged"):
+        node.knob("knobChanged").setValue(
+            "import compmatte_bridge; compmatte_bridge.on_knob_changed(nuke.thisNode(), nuke.thisKnob())"
+        )
+
 
 def create_compmatte_node() -> Any:
     """
@@ -518,6 +535,52 @@ def create_compmatte_node() -> Any:
 # =============================================================================
 # Execution Callbacks
 # =============================================================================
+
+def on_knob_changed(node: Any, knob: Optional[Any] = None) -> None:
+    """
+    Handles interactive knob updates on the CompMatte node.
+    - Synchronizes screen_type dropdown and screen_color picker swatch.
+    - Toggles Premult node live based on view_mode.
+    """
+    try:
+        k = knob
+        if k is None and _IN_NUKE:
+            k = nuke.thisKnob()
+        if not k:
+            return
+
+        k_name = k.name()
+        if k_name == "screen_type":
+            st_knob = node.knob("screen_type")
+            sc_knob = node.knob("screen_color")
+            if st_knob and sc_knob:
+                st = st_knob.value()
+                if st == "green":
+                    sc_knob.setValue([0.0, 1.0, 0.0])
+                elif st == "blue":
+                    sc_knob.setValue([0.0, 0.0, 1.0])
+        elif k_name == "screen_color":
+            st_knob = node.knob("screen_type")
+            sc_knob = node.knob("screen_color")
+            if st_knob and sc_knob:
+                val = sc_knob.value()
+                if isinstance(val, (list, tuple)) and len(val) >= 3:
+                    r, g, b = float(val[0]), float(val[1]), float(val[2])
+                    is_pure_green = (abs(r - 0.0) < 1e-3 and abs(g - 1.0) < 1e-3 and abs(b - 0.0) < 1e-3)
+                    is_pure_blue = (abs(r - 0.0) < 1e-3 and abs(g - 0.0) < 1e-3 and abs(b - 1.0) < 1e-3)
+                    if not is_pure_green and not is_pure_blue:
+                        if st_knob.value() != "custom":
+                            st_knob.setValue("custom")
+        elif k_name == "view_mode":
+            vm_knob = node.knob("view_mode")
+            if vm_knob and _IN_NUKE and hasattr(node, "node"):
+                vm = vm_knob.value()
+                premult = node.node("Premult_Node")
+                if premult:
+                    premult["disable"].setValue(vm != "Premultiplied RGBA")
+    except Exception:
+        pass
+
 
 def _export_node_frame_to_temp(nuke_node: Any, frame_num: int, prefix: str = "src") -> Optional[str]:
     """Renders a single frame from a Nuke input node to a temporary PNG file."""
@@ -576,8 +639,17 @@ def on_extract_matte(node: Any) -> None:
         hold_temp = _export_node_frame_to_temp(node.input(2), curr_frame, "hold")
 
     # Extract configuration from knobs
+    sc_val = [0.0, 1.0, 0.0]
+    if node.knob("screen_color"):
+        sc = node.knob("screen_color").value()
+        if isinstance(sc, (list, tuple)):
+            sc_val = [float(x) for x in sc[:3]]
+        elif isinstance(sc, (int, float)):
+            sc_val = [float(sc), float(sc), float(sc)]
+
     cfg = {
         "screen_type": node.knob("screen_type").value() if node.knob("screen_type") else "green",
+        "custom_color": sc_val,
         "red_weight": float(node.knob("w_red").value()) if node.knob("w_red") else 0.5,
         "blue_weight": float(node.knob("w_blue").value()) if node.knob("w_blue") else 0.5,
         "use_hole_fill": bool(node.knob("use_hole_fill").value()) if node.knob("use_hole_fill") else True,
@@ -680,12 +752,27 @@ def on_render_range(node: Any) -> None:
     target_dir = get_compmatte_cache_dir(node)
     custom_py = node.knob("custom_python").value() if node.knob("custom_python") else None
 
+    sc_val = [0.0, 1.0, 0.0]
+    if node.knob("screen_color"):
+        sc = node.knob("screen_color").value()
+        if isinstance(sc, (list, tuple)):
+            sc_val = [float(x) for x in sc[:3]]
+        elif isinstance(sc, (int, float)):
+            sc_val = [float(sc), float(sc), float(sc)]
+
     cfg = {
         "screen_type": node.knob("screen_type").value() if node.knob("screen_type") else "green",
+        "custom_color": sc_val,
         "red_weight": float(node.knob("w_red").value()) if node.knob("w_red") else 0.5,
         "blue_weight": float(node.knob("w_blue").value()) if node.knob("w_blue") else 0.5,
+        "use_hole_fill": bool(node.knob("use_hole_fill").value()) if node.knob("use_hole_fill") else True,
+        "restore_fine_edges": bool(node.knob("restore_fine_edges").value()) if node.knob("restore_fine_edges") else True,
+        "safe_zone_radius": int(node.knob("safe_radius").value()) if node.knob("safe_radius") else 40,
+        "core_erode_size": int(node.knob("core_erode").value()) if node.knob("core_erode") else 7,
+        "feather_radius": float(node.knob("feather").value()) if node.knob("feather") else 0.5,
         "black_clip": float(node.knob("black_clip").value()) if node.knob("black_clip") else 0.05,
         "white_clip": float(node.knob("white_clip").value()) if node.knob("white_clip") else 0.95,
+        "gamma": float(node.knob("gamma").value()) if node.knob("gamma") else 1.0,
     }
 
     task = nuke.ProgressTask("CompMatte Baking Sequence...")
@@ -720,7 +807,7 @@ def on_render_range(node: Any) -> None:
     try:
         read_n = node.node("Read_CompMatte_Alpha")
         if read_n:
-            read_n["file"].setValue(os.path.join(target_dir, "compmatte_alpha_%04d.png").replace("\\", "/"))
+            read_n["file"].setValue(os.path.join(target_dir, "compmatte_alpha_####.png").replace("\\", "/"))
             if read_n.knob("reload"):
                 read_n.knob("reload").execute()
     except Exception:

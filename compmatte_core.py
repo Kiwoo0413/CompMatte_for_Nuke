@@ -182,7 +182,9 @@ class IBKEngine:
             diff = b - (wr * r + wg * g)
         else:
             # Custom screen color vector distance
-            target = np.array(self.config.custom_color, dtype=np.float32) / 255.0
+            target = np.array(self.config.custom_color, dtype=np.float32)
+            if target.max() > 1.0:
+                target = target / 255.0
             dist = np.linalg.norm(img_f - target, axis=2)
             diff = np.clip(1.0 - (dist / np.sqrt(3.0)), 0.0, 1.0)
 
@@ -561,6 +563,8 @@ def run_cli() -> None:
     parser.add_argument("--holdout", default=None, help="Optional holdout mask path")
     parser.add_argument("--config-json", default=None, help="JSON configuration string")
     parser.add_argument("--screen-type", default="green", choices=["green", "blue", "custom"])
+    parser.add_argument("--custom-color", nargs=3, type=float, default=[0.0, 1.0, 0.0],
+                        help="Custom backing color RGB normalized (0.0-1.0) or (0-255)")
     parser.add_argument("--red-weight", type=float, default=0.5)
     parser.add_argument("--blue-weight", type=float, default=0.5)
     parser.add_argument("--black-clip", type=float, default=0.05)
@@ -581,8 +585,13 @@ def run_cli() -> None:
         except Exception as e:
             logger.warning(f"Failed to parse config JSON: {e}")
 
+    raw_custom_col = cfg_dict.get("custom_color", args.custom_color)
+    if isinstance(raw_custom_col, list):
+        raw_custom_col = tuple(raw_custom_col)
+
     config = CompMatteConfig(
         screen_type=cfg_dict.get("screen_type", args.screen_type),
+        custom_color=raw_custom_col,
         red_weight=float(cfg_dict.get("red_weight", args.red_weight)),
         blue_weight=float(cfg_dict.get("blue_weight", args.blue_weight)),
         black_clip=float(cfg_dict.get("black_clip", args.black_clip)),

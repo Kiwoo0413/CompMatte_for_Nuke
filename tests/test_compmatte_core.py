@@ -56,6 +56,12 @@ class TestCompMatteCore(unittest.TestCase):
         self.assertGreater(diff[10, 10], 0.3)
         self.assertLess(diff[120, 100], 0.0)
 
+    def test_custom_screen_difference(self):
+        engine = IBKEngine(CompMatteConfig(screen_type="custom", custom_color=(30, 220, 40)))
+        diff = engine.compute_screen_difference(self.frame)
+        self.assertEqual(diff.shape, (self.h, self.w))
+        self.assertGreater(diff[10, 10], 0.5)
+
     def test_clean_plate_generation(self):
         engine = IBKEngine(CompMatteConfig(screen_type="green"))
         clean = engine.generate_clean_plate(self.frame, iterations=2)

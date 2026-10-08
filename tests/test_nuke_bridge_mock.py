@@ -23,6 +23,7 @@ class TestNukeBridgeMock(unittest.TestCase):
         
         knobs = node.knobs()
         self.assertIn("screen_type", knobs)
+        self.assertIn("screen_color", knobs)
         self.assertIn("view_mode", knobs)
         self.assertIn("w_red", knobs)
         self.assertIn("btn_extract", knobs)
@@ -36,12 +37,30 @@ class TestNukeBridgeMock(unittest.TestCase):
     def test_knob_defaults(self):
         node = compmatte_bridge.create_compmatte_node()
         self.assertEqual(node.knob("screen_type").value(), "green")
+        self.assertEqual(node.knob("screen_color").value(), [0.0, 1.0, 0.0])
         self.assertEqual(node.knob("w_red").value(), 0.5)
         self.assertEqual(node.knob("use_hole_fill").value(), True)
         self.assertEqual(node.knob("restore_fine_edges").value(), True)
         self.assertEqual(node.knob("safe_radius").value(), 40)
         self.assertEqual(node.knob("black_clip").value(), 0.05)
         self.assertEqual(node.knob("white_clip").value(), 0.95)
+
+    def test_screen_color_knob_changed(self):
+        node = compmatte_bridge.create_compmatte_node()
+        # Switching screen_type to blue updates screen_color
+        node.knob("screen_type").setValue("blue")
+        compmatte_bridge.on_knob_changed(node, node.knob("screen_type"))
+        self.assertEqual(node.knob("screen_color").value(), [0.0, 0.0, 1.0])
+
+        # Switching back to green updates screen_color
+        node.knob("screen_type").setValue("green")
+        compmatte_bridge.on_knob_changed(node, node.knob("screen_type"))
+        self.assertEqual(node.knob("screen_color").value(), [0.0, 1.0, 0.0])
+
+        # Setting custom color updates screen_type to custom
+        node.knob("screen_color").setValue([0.2, 0.8, 0.4])
+        compmatte_bridge.on_knob_changed(node, node.knob("screen_color"))
+        self.assertEqual(node.knob("screen_type").value(), "custom")
 
     def test_extract_matte_mock(self):
         node = compmatte_bridge.create_compmatte_node()
