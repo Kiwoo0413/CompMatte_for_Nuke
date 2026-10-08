@@ -44,6 +44,11 @@ top_menu.addCommand(
 )
 top_menu.addSeparator()
 top_menu.addCommand(
+    'Check Python & NumPy Environment',
+    """import compmatte_bridge, nuke; info = compmatte_bridge.check_environment(); nuke.message(f"CompMatte Environment Status:\\n\\n• Mode: {info.get('mode')}\\n• Python: {info.get('python_path')}\\n• NumPy: {info.get('numpy_version')}\\n• OpenCV: {info.get('has_cv2')}\\n\\nMessage: {info.get('message')}")"""
+)
+top_menu.addSeparator()
+top_menu.addCommand(
     'About CompMatte for Nuke',
-    """import nuke; nuke.message("CompMatte for Nuke (v3.0)\\n\\nHollywood VFX Optical Alpha Matting Toolkit.\\n\\n• Nuke IBK Clean Plate & Color Difference Keyer\\n• Topological Hole-Filling (Pure White 1.0 Core Lock)\\n• Safe Zone Edge Detail Re-Injection (100% Micro Hair Preservation)\\n• Zero PyTorch / Zero VRAM Overhead (Pure Optical 60fps+)")"""
+    """import nuke; nuke.message("CompMatte for Nuke (v3.0)\\n\\nHollywood VFX Optical Alpha Matting Toolkit.\\n\\n• Nuke IBK Clean Plate & Color Difference Keyer\\n• Topological Hole-Filling (Pure White 1.0 Core Lock)\\n• Safe Zone Edge Detail Re-Injection (100% Micro Hair Preservation)\\n• Zero PyTorch / Auto-connects to Computer's NumPy")"""
 )

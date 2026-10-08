@@ -2,16 +2,21 @@
 compmatte_bridge.py - CompMatte for Nuke: Nuke Node Graph & GUI Bridge.
 Part of CompMatte for Nuke Toolkit.
 
-Provides:
-  1. Dynamic creation of CompMatte Group node in Nuke with full custom knobs.
-  2. Live DAG internal architecture with Source, CleanPlate, Holdout inputs.
-  3. One-Click Matte Extraction & Batch Range baking via compmatte_core.
-  4. Compatibility shim for headless testing outside active Nuke sessions.
+Architecture:
+  - Decoupled Hybrid Runner:
+      1. In-Process Mode: If Nuke's internal Python has NumPy/OpenCV, executes directly in-memory.
+      2. Host Subprocess Worker Mode (AutoRoto style): If Nuke's internal Python lacks NumPy,
+         automatically detects the computer's installed Python (e.g. Python 3.12, Conda, PATH)
+         and executes compmatte_core.py via background subprocess with ZERO Nuke crashes!
+  - 100% Graceful Fallback Shim for headless testing outside Nuke.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 from typing import Any, Dict, List, Optional, Tuple
@@ -74,25 +79,136 @@ except ImportError:
 
     nuke = _MockNuke()
 
-import numpy as np
 
-# Import CompMatte Core
-_curr_dir = os.path.dirname(os.path.abspath(__file__))
-if _curr_dir not in sys.path:
-    sys.path.insert(0, _curr_dir)
-
+# Safe In-Process Import Check (Never crash Nuke if NumPy is not in Nuke Python)
 try:
+    import numpy as np
+    import cv2
     import compmatte_core
     from compmatte_core import CompMatteConfig, MatteFusionEngine, IBKEngine, CoreEngine
+    _IN_PROCESS_AVAILABLE = True
 except ImportError:
-    from . import compmatte_core
-    from .compmatte_core import CompMatteConfig, MatteFusionEngine, IBKEngine, CoreEngine
+    np = None
+    cv2 = None
+    compmatte_core = None
+    _IN_PROCESS_AVAILABLE = False
 
-try:
-    import cv2
-    _HAS_CV2 = True
-except ImportError:
-    _HAS_CV2 = False
+
+# =============================================================================
+# Python Discovery Engine (AutoRoto Pattern)
+# =============================================================================
+
+def get_candidate_pythons(custom_path: Optional[str] = None) -> List[str]:
+    """
+    Assembles a prioritized list of Python interpreters available on the host computer.
+    """
+    candidates = []
+    if custom_path and os.path.isfile(custom_path.strip()):
+        candidates.append(custom_path.strip())
+
+    # 1. Dedicated Environment Variable
+    env_py = os.environ.get("COMPMATTE_PYTHON")
+    if env_py and os.path.isfile(env_py):
+        candidates.append(env_py)
+
+    # 2. Dynamic User Directories (Windows, Conda, Python.org)
+    user_home = os.path.expanduser("~")
+    common_relative = [
+        r"AppData\Local\Programs\Python\Python312\python.exe",
+        r"AppData\Local\Programs\Python\Python311\python.exe",
+        r"AppData\Local\Programs\Python\Python310\python.exe",
+        r"miniconda3\python.exe",
+        r"anaconda3\python.exe",
+        r"miniconda3\envs\compmatte\python.exe",
+        r"anaconda3\envs\compmatte\python.exe",
+        "miniconda3/bin/python",
+        "anaconda3/bin/python",
+    ]
+    for rel in common_relative:
+        p = os.path.join(user_home, rel)
+        if os.path.isfile(p) and p not in candidates:
+            candidates.append(p)
+
+    # 3. System PATH Discovery
+    for cmd in ("python", "python3"):
+        which_p = shutil.which(cmd)
+        if which_p and which_p not in candidates:
+            candidates.append(which_p)
+
+    return candidates
+
+
+def find_compmatte_python(custom_path: Optional[str] = None) -> Optional[str]:
+    """
+    Discovers an external Python interpreter equipped with NumPy on the host computer.
+    Tests candidate by running a fast probing command.
+    """
+    candidates = get_candidate_pythons(custom_path)
+    for py_exe in candidates:
+        try:
+            cmd = [py_exe, "-c", "import numpy; print('OK')"]
+            out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=5).decode().strip()
+            if "OK" in out:
+                return py_exe
+        except Exception:
+            continue
+    return None
+
+
+def check_environment(custom_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Comprehensive diagnostic report for CompMatte Python & NumPy environment.
+    """
+    if _IN_PROCESS_AVAILABLE:
+        return {
+            "available": True,
+            "mode": "In-Process (Nuke Python)",
+            "python_path": sys.executable,
+            "numpy_version": np.__version__,
+            "has_cv2": True if cv2 else False,
+            "message": "Nuke Python has NumPy. Ultra-fast in-process execution active.",
+        }
+
+    ext_py = find_compmatte_python(custom_path)
+    if not ext_py:
+        return {
+            "available": False,
+            "mode": "None",
+            "python_path": None,
+            "numpy_version": None,
+            "has_cv2": False,
+            "message": "No Python with NumPy detected on system.\nPlease install NumPy on computer or set COMPMATTE_PYTHON.",
+        }
+
+    try:
+        check_code = (
+            "import numpy, json\n"
+            "try:\n"
+            "    import cv2\n"
+            "    c_ver = cv2.__version__\n"
+            "except ImportError:\n"
+            "    c_ver = None\n"
+            "print(json.dumps({'numpy': numpy.__version__, 'cv2': c_ver}))\n"
+        )
+        out = subprocess.check_output([ext_py, "-c", check_code], stderr=subprocess.STDOUT, timeout=5).decode().strip()
+        info = json.loads(out)
+        return {
+            "available": True,
+            "mode": "Host Subprocess Worker",
+            "python_path": ext_py,
+            "numpy_version": info.get("numpy"),
+            "has_cv2": bool(info.get("cv2")),
+            "message": f"Using computer Python ({ext_py}) with NumPy {info.get('numpy')}.",
+        }
+    except Exception as e:
+        return {
+            "available": False,
+            "mode": "Error",
+            "python_path": ext_py,
+            "numpy_version": None,
+            "has_cv2": False,
+            "message": f"Error probing Python {ext_py}: {e}",
+        }
 
 
 # =============================================================================
@@ -135,6 +251,47 @@ def get_compmatte_cache_dir() -> str:
 
 
 # =============================================================================
+# Subprocess Execution
+# =============================================================================
+
+def run_compmatte_external(
+    src_path: str,
+    out_path: str,
+    config: Dict[str, Any],
+    clean_path: Optional[str] = None,
+    holdout_path: Optional[str] = None,
+    custom_python: Optional[str] = None,
+) -> bool:
+    """
+    Executes compmatte_core.py as a standalone process using host Python.
+    """
+    py_exe = find_compmatte_python(custom_python)
+    if not py_exe:
+        raise RuntimeError(
+            "CompMatte: No Python with NumPy found on this computer!\n"
+            "Please ensure NumPy is installed or set COMPMATTE_PYTHON environment variable."
+        )
+
+    core_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compmatte_core.py")
+    cmd = [
+        py_exe,
+        core_script,
+        "--input", src_path,
+        "--output", out_path,
+        "--config-json", json.dumps(config),
+    ]
+    if clean_path and os.path.exists(clean_path):
+        cmd.extend(["--clean-plate", clean_path])
+    if holdout_path and os.path.exists(holdout_path):
+        cmd.extend(["--holdout", holdout_path])
+
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+    if res.returncode != 0:
+        raise RuntimeError(f"CompMatte Worker Error:\n{res.stderr.strip()}")
+    return True
+
+
+# =============================================================================
 # Node Setup & Knobs
 # =============================================================================
 
@@ -157,7 +314,6 @@ def setup_compmatte_knobs(node: Any) -> None:
     view_mode.setTooltip("Select which stage to display in the Nuke Viewer.")
     node.addKnob(view_mode)
 
-    # Color difference balance weights
     w_red = nuke.Double_Knob("w_red", "Red Weight")
     w_red.setValue(0.5)
     node.addKnob(w_red)
@@ -182,7 +338,9 @@ def setup_compmatte_knobs(node: Any) -> None:
     node.addKnob(btn_range)
 
     # Status readout
-    status = nuke.Text_Knob("cm_status", "Status", "Ready (Pure Optical Engine - 60fps+)")
+    env_info = check_environment()
+    status_msg = f"Ready ({env_info['mode']})"
+    status = nuke.Text_Knob("cm_status", "Status", status_msg)
     node.addKnob(status)
 
     # ----------------- Tab 2: Clean Plate (IBK) -----------------
@@ -239,16 +397,29 @@ def setup_compmatte_knobs(node: Any) -> None:
     gamma.setValue(1.0)
     node.addKnob(gamma)
 
-    # ----------------- Tab 4: About -----------------
-    tab_about = nuke.Tab_Knob("tab_about", "About")
-    node.addKnob(tab_about)
+    # ----------------- Tab 4: Python & Settings -----------------
+    tab_settings = nuke.Tab_Knob("tab_settings", "Python & Settings")
+    node.addKnob(tab_settings)
+
+    custom_py = nuke.File_Knob("custom_python", "Host Python Executable")
+    if env_info.get("python_path"):
+        custom_py.setValue(env_info["python_path"])
+    custom_py.setTooltip("Specify custom external Python interpreter if auto-detection needs override.")
+    node.addKnob(custom_py)
+
+    btn_check_env = nuke.PyScript_Knob(
+        "btn_check_env", "🔍 Check Python & NumPy Status",
+        "import compmatte_bridge, nuke; info = compmatte_bridge.check_environment(nuke.thisNode().knob('custom_python').value()); nuke.message(f\"CompMatte Environment Status:\\n\\n• Mode: {info.get('mode')}\\n• Python: {info.get('python_path')}\\n• NumPy: {info.get('numpy_version')}\\n• OpenCV: {info.get('has_cv2')}\\n\\nMessage: {info.get('message')}\")"
+    )
+    node.addKnob(btn_check_env)
+
     about_text = nuke.Text_Knob(
         "about_info", "",
         "<b>CompMatte for Nuke (v3.0)</b><br/>"
         "• Pure Optical & Compositing Alpha Matting Toolkit<br/>"
         "• Topological Hole-Filling (100% Solid Core)<br/>"
         "• Safe Zone Edge Detail Re-Injection (0% Hair Loss)<br/>"
-        "• Zero PyTorch / Zero VRAM Overhead (Real-Time 60fps+)"
+        "• Zero PyTorch / Uses Computer's Installed NumPy Seamlessly"
     )
     node.addKnob(about_text)
 
@@ -267,18 +438,32 @@ def create_compmatte_node() -> Any:
     # Wire up internal DAG
     if _IN_NUKE:
         node.begin()
-        # Clean existing internal nodes
         for n in nuke.allNodes():
             nuke.delete(n)
 
-        # Inputs
         in_src = nuke.nodes.Input(name="Source")
         in_bg = nuke.nodes.Input(name="CleanPlate")
         in_hold = nuke.nodes.Input(name="Holdout")
 
-        # Output
+        # Internal Read node for baked alpha
+        cache_dir = get_compmatte_cache_dir()
+        read_alpha = nuke.nodes.Read(name="Read_CompMatte_Alpha")
+        read_alpha["file"].setValue(os.path.join(cache_dir, "compmatte_alpha_%04d.png").replace("\\", "/"))
+
+        # Channel Copy / Inject to Alpha
+        copy_node = nuke.nodes.Copy(name="Copy_Alpha")
+        copy_node.setInput(0, in_src)
+        copy_node.setInput(1, read_alpha)
+        copy_node["from0"].setValue("rgba.alpha")
+        copy_node["to0"].setValue("rgba.alpha")
+
+        # Premult option
+        premult_node = nuke.nodes.Premult(name="Premult_Node")
+        premult_node.setInput(0, copy_node)
+        premult_node["disable"].setValue(True)
+
         out_node = nuke.nodes.Output(name="Output")
-        out_node.setInput(0, in_src)
+        out_node.setInput(0, copy_node)
 
         node.end()
 
@@ -289,40 +474,35 @@ def create_compmatte_node() -> Any:
 # Execution Callbacks
 # =============================================================================
 
-def _read_frame_rgb(node: Any, frame_num: int) -> Optional[np.ndarray]:
-    """Renders a single frame from the input node to a temporary cache file and loads as RGB NumPy array."""
-    if not _IN_NUKE or not _HAS_CV2:
-        # Synthetic mock for testing
-        h, w = 200, 200
-        mock = np.zeros((h, w, 3), dtype=np.uint8)
-        mock[:, :, 1] = 200
-        return mock
-
-    src_input = node.input(0)
-    if not src_input:
-        nuke.message("Please connect an image or video plate to the 'Source' input.")
-        return None
+def _export_node_frame_to_temp(nuke_node: Any, frame_num: int, prefix: str = "src") -> Optional[str]:
+    """Renders a single frame from a Nuke input node to a temporary PNG file."""
+    if not _IN_NUKE:
+        # Mock for headless tests
+        cache_dir = get_compmatte_cache_dir()
+        mock_file = os.path.join(cache_dir, f"cm_mock_{prefix}_{frame_num}.png").replace("\\", "/")
+        if _IN_PROCESS_AVAILABLE:
+            mock_arr = np.zeros((100, 100, 3), dtype=np.uint8)
+            mock_arr[:, :, 1] = 200
+            cv2.imwrite(mock_file, mock_arr)
+        else:
+            with open(mock_file, "w") as f:
+                f.write("mock")
+        return mock_file
 
     cache_dir = get_compmatte_cache_dir()
-    temp_file = os.path.join(cache_dir, f"cm_tmp_{frame_num}.png").replace("\\", "/")
+    temp_file = os.path.join(cache_dir, f"cm_{prefix}_{frame_num}.png").replace("\\", "/")
 
     write_node = nuke.nodes.Write(file=temp_file, file_type="png", channels="rgb")
-    write_node.setInput(0, src_input)
+    write_node.setInput(0, nuke_node)
 
     try:
         nuke.execute(write_node, frame_num, frame_num, 1)
         if os.path.exists(temp_file):
-            bgr = cv2.imread(temp_file)
-            if bgr is not None:
-                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                return rgb
+            return temp_file
+    except Exception as e:
+        nuke.message(f"CompMatte Render Error: {e}")
     finally:
         nuke.delete(write_node)
-        if os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except Exception:
-                pass
 
     return None
 
@@ -330,50 +510,93 @@ def _read_frame_rgb(node: Any, frame_num: int) -> Optional[np.ndarray]:
 def on_extract_matte(node: Any) -> None:
     """Callback when '⚡ Extract Matte (Current Frame)' button is pressed."""
     curr_frame = int(nuke.frame()) if _IN_NUKE else 1
-    rgb = _read_frame_rgb(node, curr_frame)
-    if rgb is None:
+    src_input = node.input(0) if _IN_NUKE else node
+
+    if _IN_NUKE and not src_input:
+        nuke.message("Please connect an image or video plate to the 'Source' input.")
         return
 
-    # Extract parameters from knobs
-    st = node.knob("screen_type").value() if node.knob("screen_type") else "green"
-    wr = float(node.knob("w_red").value()) if node.knob("w_red") else 0.5
-    wb = float(node.knob("w_blue").value()) if node.knob("w_blue") else 0.5
-    hole_fill = bool(node.knob("use_hole_fill").value()) if node.knob("use_hole_fill") else True
-    restore_edges = bool(node.knob("restore_fine_edges").value()) if node.knob("restore_fine_edges") else True
-    safe_rad = int(node.knob("safe_radius").value()) if node.knob("safe_radius") else 40
-    b_clip = float(node.knob("black_clip").value()) if node.knob("black_clip") else 0.05
-    w_clip = float(node.knob("white_clip").value()) if node.knob("white_clip") else 0.95
-    gamma = float(node.knob("gamma").value()) if node.knob("gamma") else 1.0
+    # Render source frame
+    src_temp = _export_node_frame_to_temp(src_input, curr_frame, "src")
+    if not src_temp or not os.path.exists(src_temp):
+        return
 
-    config = CompMatteConfig(
-        screen_type=st,
-        red_weight=wr,
-        blue_weight=wb,
-        green_weight=wb,
-        use_hole_fill=hole_fill,
-        restore_fine_edges=restore_edges,
-        safe_zone_radius=safe_rad,
-        black_clip=b_clip,
-        white_clip=w_clip,
-        gamma=gamma,
-    )
+    # Check optional inputs
+    clean_temp = None
+    if _IN_NUKE and node.input(1):
+        clean_temp = _export_node_frame_to_temp(node.input(1), curr_frame, "clean")
 
-    engine = MatteFusionEngine(config)
-    result = engine.process_compmatte(rgb)
+    hold_temp = None
+    if _IN_NUKE and node.input(2):
+        hold_temp = _export_node_frame_to_temp(node.input(2), curr_frame, "hold")
 
-    # Save baked alpha frame to cache
+    # Extract configuration from knobs
+    cfg = {
+        "screen_type": node.knob("screen_type").value() if node.knob("screen_type") else "green",
+        "red_weight": float(node.knob("w_red").value()) if node.knob("w_red") else 0.5,
+        "blue_weight": float(node.knob("w_blue").value()) if node.knob("w_blue") else 0.5,
+        "use_hole_fill": bool(node.knob("use_hole_fill").value()) if node.knob("use_hole_fill") else True,
+        "restore_fine_edges": bool(node.knob("restore_fine_edges").value()) if node.knob("restore_fine_edges") else True,
+        "safe_zone_radius": int(node.knob("safe_radius").value()) if node.knob("safe_radius") else 40,
+        "core_erode_size": int(node.knob("core_erode").value()) if node.knob("core_erode") else 7,
+        "feather_radius": float(node.knob("feather").value()) if node.knob("feather") else 0.5,
+        "black_clip": float(node.knob("black_clip").value()) if node.knob("black_clip") else 0.05,
+        "white_clip": float(node.knob("white_clip").value()) if node.knob("white_clip") else 0.95,
+        "gamma": float(node.knob("gamma").value()) if node.knob("gamma") else 1.0,
+    }
+
     cache_dir = get_compmatte_cache_dir()
-    alpha_uint8 = np.clip(result["alpha"] * 255.0, 0, 255).astype(np.uint8)
     out_alpha_path = os.path.join(cache_dir, f"compmatte_alpha_{curr_frame:04d}.png").replace("\\", "/")
 
-    if _HAS_CV2:
-        cv2.imwrite(out_alpha_path, alpha_uint8)
+    custom_py = node.knob("custom_python").value() if node.knob("custom_python") else None
 
-    if node.knob("cm_status"):
-        node.knob("cm_status").setValue(f"Frame {curr_frame} Matte Extracted successfully! (100% Core Locked)")
+    # Execution (In-Process vs Host Subprocess Worker)
+    try:
+        if _IN_PROCESS_AVAILABLE:
+            bgr = cv2.imread(src_temp)
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            config_obj = CompMatteConfig(**cfg)
+            engine = MatteFusionEngine(config_obj)
+            res = engine.process_compmatte(rgb)
+            alpha_u8 = np.clip(res["alpha"] * 255.0, 0, 255).astype(np.uint8)
+            cv2.imwrite(out_alpha_path, alpha_u8)
+            mode_desc = "In-Process"
+        else:
+            if not _IN_NUKE:
+                # Mock write for headless test
+                with open(out_alpha_path, "w") as f:
+                    f.write("mock_alpha")
+                mode_desc = "Mock"
+            else:
+                run_compmatte_external(src_temp, out_alpha_path, cfg, clean_temp, hold_temp, custom_py)
+                mode_desc = "Host Python Worker"
 
-    if _IN_NUKE:
-        nuke.message(f"CompMatte: Frame {curr_frame} Alpha Matte extracted and locked!\nSaved to: {out_alpha_path}")
+        # Update node status
+        msg = f"Frame {curr_frame} Matte Extracted successfully! ({mode_desc})"
+        if node.knob("cm_status"):
+            node.knob("cm_status").setValue(msg)
+
+        if _IN_NUKE:
+            # Reload internal Read node
+            try:
+                read_n = node.node("Read_CompMatte_Alpha")
+                if read_n and read_n.knob("reload"):
+                    read_n.knob("reload").execute()
+            except Exception:
+                pass
+
+    except Exception as err:
+        err_msg = f"CompMatte Error: {err}"
+        if node.knob("cm_status"):
+            node.knob("cm_status").setValue(err_msg)
+        if _IN_NUKE:
+            nuke.message(err_msg)
+    finally:
+        # Clean up temporary source render files
+        for p in (src_temp, clean_temp, hold_temp):
+            if p and os.path.exists(p):
+                try: os.remove(p)
+                except Exception: pass
 
 
 def on_render_range(node: Any) -> None:
@@ -398,32 +621,45 @@ def on_render_range(node: Any) -> None:
         nuke.message("Invalid frame range specified.")
         return
 
-    cache_dir = get_compmatte_cache_dir()
-    task = nuke.ProgressTask("CompMatte Baking Sequence...")
+    src_input = node.input(0)
+    if not src_input:
+        nuke.message("Please connect an image or video plate to the 'Source' input.")
+        return
 
+    cache_dir = get_compmatte_cache_dir()
+    custom_py = node.knob("custom_python").value() if node.knob("custom_python") else None
+
+    cfg = {
+        "screen_type": node.knob("screen_type").value() if node.knob("screen_type") else "green",
+        "red_weight": float(node.knob("w_red").value()) if node.knob("w_red") else 0.5,
+        "blue_weight": float(node.knob("w_blue").value()) if node.knob("w_blue") else 0.5,
+        "black_clip": float(node.knob("black_clip").value()) if node.knob("black_clip") else 0.05,
+        "white_clip": float(node.knob("white_clip").value()) if node.knob("white_clip") else 0.95,
+    }
+
+    task = nuke.ProgressTask("CompMatte Baking Sequence...")
     total_frames = max(1, end_f - start_f + 1)
+
     for idx, f in enumerate(range(start_f, end_f + 1)):
         if task.isCancelled():
             break
         task.setMessage(f"Processing Frame {f} ({idx + 1}/{total_frames})...")
         task.setProgress(int((idx / total_frames) * 100))
 
-        rgb = _read_frame_rgb(node, f)
-        if rgb is None:
+        src_temp = _export_node_frame_to_temp(src_input, f, "src")
+        if not src_temp:
             continue
 
-        config = CompMatteConfig(
-            screen_type=node.knob("screen_type").value() if node.knob("screen_type") else "green",
-            black_clip=float(node.knob("black_clip").value()) if node.knob("black_clip") else 0.05,
-            white_clip=float(node.knob("white_clip").value()) if node.knob("white_clip") else 0.95,
-        )
-        engine = MatteFusionEngine(config)
-        res = engine.process_compmatte(rgb)
-
-        alpha_uint8 = np.clip(res["alpha"] * 255.0, 0, 255).astype(np.uint8)
-        out_path = os.path.join(cache_dir, f"compmatte_alpha_{f:04d}.png").replace("\\", "/")
-        if _HAS_CV2:
-            cv2.imwrite(out_path, alpha_uint8)
+        out_alpha_path = os.path.join(cache_dir, f"compmatte_alpha_{f:04d}.png").replace("\\", "/")
+        try:
+            run_compmatte_external(src_temp, out_alpha_path, cfg, None, None, custom_py)
+        except Exception as e:
+            nuke.message(f"Frame {f} failed: {e}")
+            break
+        finally:
+            if src_temp and os.path.exists(src_temp):
+                try: os.remove(src_temp)
+                except Exception: pass
 
     del task
     if node.knob("cm_status"):

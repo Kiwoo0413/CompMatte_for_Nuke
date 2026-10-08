@@ -122,6 +122,34 @@ class TestCompMatteCore(unittest.TestCase):
         self.assertEqual(alpha[5, 5], 0.0)
         self.assertEqual(alpha[120, 100], 1.0)
 
+    def test_cli_worker(self):
+        import subprocess
+        import tempfile
+        import cv2
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            in_path = os.path.join(temp_dir, "test_in.png")
+            out_path = os.path.join(temp_dir, "test_out.png")
+            # Save input frame
+            cv2.imwrite(in_path, cv2.cvtColor(self.frame, cv2.COLOR_RGB2BGR))
+
+            core_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "compmatte_core.py"))
+            cmd = [sys.executable, core_py, "--input", in_path, "--output", out_path, "--screen-type", "green"]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(res.returncode, 0)
+            self.assertTrue(os.path.exists(out_path))
+
+            # Verify output alpha
+            alpha_img = cv2.imread(out_path, cv2.IMREAD_GRAYSCALE)
+            self.assertIsNotNone(alpha_img)
+            self.assertEqual(alpha_img.shape, (self.h, self.w))
+            self.assertEqual(alpha_img[5, 5], 0)
+            self.assertEqual(alpha_img[120, 100], 255)
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -538,3 +538,111 @@ class MatteFusionEngine:
             "premultiplied_rgb": premult_rgb,
             "was_inverted": was_inverted,
         }
+
+
+# =============================================================================
+# CLI Subprocess Worker Interface (For Nuke External Python Execution)
+# =============================================================================
+
+def run_cli() -> None:
+    """
+    Command-line interface allowing external Python instances (e.g. host Python with NumPy)
+    to process frames requested by Nuke without requiring NumPy in Nuke's internal Python.
+    """
+    import argparse
+    import json
+    import os
+    import sys
+
+    parser = argparse.ArgumentParser(description="CompMatte Optical Matting CLI Worker")
+    parser.add_argument("--input", "-i", required=True, help="Input plate image path (RGB)")
+    parser.add_argument("--output", "-o", required=True, help="Output alpha matte path (PNG)")
+    parser.add_argument("--clean-plate", "-c", default=None, help="Optional clean plate path")
+    parser.add_argument("--holdout", default=None, help="Optional holdout mask path")
+    parser.add_argument("--config-json", default=None, help="JSON configuration string")
+    parser.add_argument("--screen-type", default="green", choices=["green", "blue", "custom"])
+    parser.add_argument("--red-weight", type=float, default=0.5)
+    parser.add_argument("--blue-weight", type=float, default=0.5)
+    parser.add_argument("--black-clip", type=float, default=0.05)
+    parser.add_argument("--white-clip", type=float, default=0.95)
+    parser.add_argument("--gamma", type=float, default=1.0)
+    parser.add_argument("--hole-fill", type=int, default=1)
+    parser.add_argument("--restore-edges", type=int, default=1)
+    parser.add_argument("--safe-radius", type=int, default=40)
+    parser.add_argument("--core-erode", type=int, default=7)
+    parser.add_argument("--feather", type=float, default=0.5)
+
+    args = parser.parse_args()
+
+    cfg_dict = {}
+    if args.config_json:
+        try:
+            cfg_dict = json.loads(args.config_json)
+        except Exception as e:
+            logger.warning(f"Failed to parse config JSON: {e}")
+
+    config = CompMatteConfig(
+        screen_type=cfg_dict.get("screen_type", args.screen_type),
+        red_weight=float(cfg_dict.get("red_weight", args.red_weight)),
+        blue_weight=float(cfg_dict.get("blue_weight", args.blue_weight)),
+        black_clip=float(cfg_dict.get("black_clip", args.black_clip)),
+        white_clip=float(cfg_dict.get("white_clip", args.white_clip)),
+        gamma=float(cfg_dict.get("gamma", args.gamma)),
+        use_hole_fill=bool(cfg_dict.get("use_hole_fill", args.hole_fill)),
+        restore_fine_edges=bool(cfg_dict.get("restore_fine_edges", args.restore_edges)),
+        safe_zone_radius=int(cfg_dict.get("safe_zone_radius", args.safe_radius)),
+        core_erode_size=int(cfg_dict.get("core_erode_size", args.core_erode)),
+        feather_radius=float(cfg_dict.get("feather_radius", args.feather)),
+    )
+
+    if not os.path.exists(args.input):
+        print(f"[Error] Input file not found: {args.input}", file=sys.stderr)
+        sys.exit(1)
+
+    if _HAS_CV2:
+        bgr = cv2.imread(args.input)
+        if bgr is None:
+            print(f"[Error] Failed to read image: {args.input}", file=sys.stderr)
+            sys.exit(1)
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    else:
+        from PIL import Image
+        rgb = np.array(Image.open(args.input).convert("RGB"))
+
+    clean_img = None
+    if args.clean_plate and os.path.exists(args.clean_plate):
+        if _HAS_CV2:
+            cp_bgr = cv2.imread(args.clean_plate)
+            if cp_bgr is not None:
+                clean_img = cv2.cvtColor(cp_bgr, cv2.COLOR_BGR2RGB)
+        else:
+            from PIL import Image
+            clean_img = np.array(Image.open(args.clean_plate).convert("RGB"))
+
+    holdout_img = None
+    if args.holdout and os.path.exists(args.holdout):
+        if _HAS_CV2:
+            holdout_img = cv2.imread(args.holdout, cv2.IMREAD_GRAYSCALE)
+        else:
+            from PIL import Image
+            holdout_img = np.array(Image.open(args.holdout).convert("L"))
+
+    engine = MatteFusionEngine(config)
+    res = engine.process_compmatte(rgb, clean_plate=clean_img, holdout_mask=holdout_img)
+
+    alpha_u8 = np.clip(res["alpha"] * 255.0, 0, 255).astype(np.uint8)
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    if _HAS_CV2:
+        cv2.imwrite(args.output, alpha_u8)
+    else:
+        from PIL import Image
+        Image.fromarray(alpha_u8).save(args.output)
+
+    print(json.dumps({"status": "success", "output": args.output, "was_inverted": bool(res["was_inverted"])}))
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    run_cli()
+

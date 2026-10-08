@@ -45,8 +45,11 @@ Gizmo {
  addUserKnob {7 gamma l "Alpha Gamma" R 0.1 3}
  gamma 1.0
 
- addUserKnob {20 tab_about l "About"}
- addUserKnob {26 about_info l "" +STARTLINE T "<b>CompMatte for Nuke (v3.0)</b><br/>• Pure Optical & Compositing Alpha Matting Toolkit<br/>• Topological Hole-Filling (100% Solid Core)<br/>• Safe Zone Edge Detail Re-Injection (0% Hair Loss)<br/>• Zero PyTorch / Zero VRAM Overhead (Real-Time 60fps+)"}
+ addUserKnob {20 tab_settings l "Python & Settings"}
+ addUserKnob {2 custom_python l "Host Python Executable"}
+ addUserKnob {22 btn_check_env l "🔍 Check Python & NumPy Status" T "import compmatte_bridge, nuke; info = compmatte_bridge.check_environment(nuke.thisNode().knob('custom_python').value()); nuke.message(f\"CompMatte Environment Status:\\n\\n• Mode: {info.get('mode')}\\n• Python: {info.get('python_path')}\\n• NumPy: {info.get('numpy_version')}\\n• OpenCV: {info.get('has_cv2')}\\n\\nMessage: {info.get('message')}\")" +STARTLINE}
+ addUserKnob {26 sep_about l "" +STARTLINE}
+ addUserKnob {26 about_info l "" +STARTLINE T "<b>CompMatte for Nuke (v3.0)</b><br/>• Pure Optical & Compositing Alpha Matting Toolkit<br/>• Topological Hole-Filling (100% Solid Core)<br/>• Safe Zone Edge Detail Re-Injection (0% Hair Loss)<br/>• Zero PyTorch / Auto-connects to Computer's NumPy"}
 }
  Input {
   inputs 0

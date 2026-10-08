@@ -49,6 +49,18 @@ class TestNukeBridgeMock(unittest.TestCase):
         status_knob = node.knob("cm_status")
         self.assertTrue("Extracted successfully" in status_knob.value())
 
+    def test_environment_discovery(self):
+        env_info = compmatte_bridge.check_environment()
+        self.assertIn("available", env_info)
+        self.assertIn("mode", env_info)
+        self.assertTrue(env_info["available"])
+        self.assertIsNotNone(env_info["numpy_version"])
+
+    def test_find_compmatte_python(self):
+        py_exe = compmatte_bridge.find_compmatte_python()
+        self.assertIsNotNone(py_exe)
+        self.assertTrue(os.path.exists(py_exe))
+
 
 if __name__ == "__main__":
     unittest.main()
