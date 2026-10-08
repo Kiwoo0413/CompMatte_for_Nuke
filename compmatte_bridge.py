@@ -721,8 +721,24 @@ def on_render_range(node: Any) -> None:
     if not _IN_NUKE:
         return
 
-    first_f = int(nuke.root()["first_frame"].value())
-    last_f = int(nuke.root()["last_frame"].value())
+    src_input = node.input(0)
+    if not src_input:
+        nuke.message("Please connect an image or video plate to the 'Source' input.")
+        return
+
+    # Auto-detect clip frame range from upstream node (e.g. Read node for MXF/MOV/EXR)
+    first_f = None
+    last_f = None
+    if src_input.knob("first") and src_input.knob("last"):
+        try:
+            first_f = int(src_input.knob("first").value())
+            last_f = int(src_input.knob("last").value())
+        except Exception:
+            pass
+    if first_f is None or last_f is None:
+        first_f = int(nuke.root()["first_frame"].value())
+        last_f = int(nuke.root()["last_frame"].value())
+
     curr_custom = node.knob("output_dir").value() if node.knob("output_dir") else ""
 
     panel = nuke.Panel("Bake CompMatte Sequence")
@@ -743,11 +759,6 @@ def on_render_range(node: Any) -> None:
     new_custom = panel.value("Output Folder (empty = default cache):").strip()
     if node.knob("output_dir"):
         node.knob("output_dir").setValue(new_custom)
-
-    src_input = node.input(0)
-    if not src_input:
-        nuke.message("Please connect an image or video plate to the 'Source' input.")
-        return
 
     target_dir = get_compmatte_cache_dir(node)
     custom_py = node.knob("custom_python").value() if node.knob("custom_python") else None
@@ -803,11 +814,19 @@ def on_render_range(node: Any) -> None:
     if node.knob("cm_status"):
         node.knob("cm_status").setValue(f"Bake Complete for frames {start_f}..{end_f} in {target_dir}")
 
-    # Reload internal Read node with active directory
+    # Reload internal Read node with active directory and frame range
     try:
         read_n = node.node("Read_CompMatte_Alpha")
         if read_n:
             read_n["file"].setValue(os.path.join(target_dir, "compmatte_alpha_####.png").replace("\\", "/"))
+            if read_n.knob("first"):
+                read_n["first"].setValue(start_f)
+            if read_n.knob("last"):
+                read_n["last"].setValue(end_f)
+            if read_n.knob("origfirst"):
+                read_n["origfirst"].setValue(start_f)
+            if read_n.knob("origlast"):
+                read_n["origlast"].setValue(end_f)
             if read_n.knob("reload"):
                 read_n.knob("reload").execute()
     except Exception:
