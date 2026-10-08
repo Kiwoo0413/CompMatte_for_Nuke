@@ -493,7 +493,7 @@ def create_compmatte_node() -> Any:
         # Internal Read node for baked alpha
         cache_dir = get_compmatte_cache_dir()
         read_alpha = nuke.nodes.Read(name="Read_CompMatte_Alpha")
-        read_alpha["file"].setValue(os.path.join(cache_dir, "compmatte_alpha_%04d.png").replace("\\", "/"))
+        read_alpha["file"].setValue (os.path.join(cache_dir, "compmatte_alpha_####.png").replace("\\", "/"))
 
         # Channel Copy / Inject to Alpha
         copy_node = nuke.nodes.Copy(name="Copy_Alpha")
@@ -508,7 +508,7 @@ def create_compmatte_node() -> Any:
         premult_node["disable"].setValue(True)
 
         out_node = nuke.nodes.Output(name="Output")
-        out_node.setInput(0, copy_node)
+        out_node.setInput(0, premult_node)
 
         node.end()
 
